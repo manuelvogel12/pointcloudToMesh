@@ -5,13 +5,14 @@
 #include <pcl/surface/gp3.h>
 #include <pcl/surface/mls.h>
 #include <pcl/surface/poisson.h>
+#include <pcl/io/ply_io.h>
 
 /*
 estimation method to calculate normals
 supports normal or mls estimation
 */
-void set_normal_est_method(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud, int &method,
-                           pcl::PointCloud<pcl::PointNormal>::Ptr &cloud_with_normals) {
+void set_normal_est_method(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, int &method,
+                           pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr &cloud_with_normals) {
   // Translated point cloud to origin
   Eigen::Vector4f centroid;
   pcl::compute3DCentroid(*cloud, centroid);
@@ -19,10 +20,10 @@ void set_normal_est_method(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud, int &meth
   Eigen::Affine3f transform = Eigen::Affine3f::Identity();
   transform.translation() << -centroid[0], -centroid[1], -centroid[2];
 
-  pcl::PointCloud<pcl::PointXYZ>::Ptr cloudTranslated(new pcl::PointCloud<pcl::PointXYZ>());
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloudTranslated(new pcl::PointCloud<pcl::PointXYZRGB>());
   pcl::transformPointCloud(*cloud, *cloudTranslated, transform);
 
-  pcl::search::KdTree<pcl::PointXYZ>::Ptr kdtree_for_points(new pcl::search::KdTree<pcl::PointXYZ>);
+  pcl::search::KdTree<pcl::PointXYZRGB>::Ptr kdtree_for_points(new pcl::search::KdTree<pcl::PointXYZRGB>);
   kdtree_for_points->setInputCloud(cloudTranslated);
 
   const int normal_mode = 1, mls_mode = 2;
@@ -30,21 +31,23 @@ void set_normal_est_method(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud, int &meth
     case normal_mode: {
       std::cout << "Using normal method estimation...";
 
-      pcl::NormalEstimationOMP<pcl::PointXYZ, pcl::Normal> n;
+      pcl::NormalEstimationOMP<pcl::PointXYZRGB, pcl::Normal> n;
       pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
 
       n.setInputCloud(cloudTranslated);
       n.setSearchMethod(kdtree_for_points);
       n.setKSearch(20);     // It was 20
       n.compute(*normals);  // Normals are estimated using standard method.
+
+      //pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr temp_cloud_with_normals(new pcl::PointCloud<pcl::PointXYZRGBNormal>());
       pcl::concatenateFields(*cloud, *normals, *cloud_with_normals);
       break;
     }
     case mls_mode: {
       std::cout << "Using mls method estimation...";
 
-      pcl::PointCloud<pcl::PointNormal>::Ptr mls_points(new pcl::PointCloud<pcl::PointNormal>());
-      pcl::MovingLeastSquares<pcl::PointXYZ, pcl::PointNormal> mls;
+      pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr mls_points(new pcl::PointCloud<pcl::PointXYZRGBNormal>());
+      pcl::MovingLeastSquares<pcl::PointXYZRGB, pcl::PointXYZRGBNormal> mls;
 
       // parameters
       mls.setComputeNormals(true);
@@ -52,14 +55,7 @@ void set_normal_est_method(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud, int &meth
       mls.setSearchMethod(kdtree_for_points);
       mls.setSearchRadius(0.03);
       mls.process(*mls_points);
-      // mls.setDilationIterations(10);
-      // mls.setDilationVoxelSize(0.5);
-      // mls.setSqrGaussParam(2.0);
-      // mls.setUpsamplingRadius(5);
-      // mls.setPolynomialOrder (2);
-      // mls.setPointDensity(30);
-
-      pcl::concatenateFields(*cloud, *mls_points, *cloud_with_normals);
+      *cloud_with_normals = *mls_points;
       break;
     }
   }
@@ -70,7 +66,7 @@ void set_normal_est_method(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud, int &meth
 estimation method to calculate surface
 supports poisson or gp3 estimation
 */
-void set_surface_est_method(pcl::PointCloud<pcl::PointNormal>::Ptr &cloud_with_normals, int &method,
+void set_surface_est_method(pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr &cloud_with_normals, int &method,
                             pcl::PolygonMesh &triangles) {
   std::cout << "Applying surface meshing...";
 
@@ -92,7 +88,7 @@ void set_surface_est_method(pcl::PointCloud<pcl::PointNormal>::Ptr &cloud_with_n
       bool manifold = true;
       int solverDivide = 8;
 
-      pcl::Poisson<pcl::PointNormal> poisson;
+      pcl::Poisson<pcl::PointXYZRGBNormal> poisson;
 
       poisson.setDepth(depth);  // 9
       poisson.setInputCloud(cloud_with_normals);
@@ -120,10 +116,10 @@ void set_surface_est_method(pcl::PointCloud<pcl::PointNormal>::Ptr &cloud_with_n
       bool normalConsistency = false;
 
       // Create search tree
-      pcl::search::KdTree<pcl::PointNormal>::Ptr kdtree_for_normals(new pcl::search::KdTree<pcl::PointNormal>);
+      pcl::search::KdTree<pcl::PointXYZRGBNormal>::Ptr kdtree_for_normals(new pcl::search::KdTree<pcl::PointXYZRGBNormal>);
       kdtree_for_normals->setInputCloud(cloud_with_normals);
 
-      pcl::GreedyProjectionTriangulation<pcl::PointNormal> gp3;
+      pcl::GreedyProjectionTriangulation<pcl::PointXYZRGBNormal> gp3;
 
       gp3.setSearchRadius(search_radius);                    // It was 0.025
       gp3.setMu(setMU);                                      // It was 2.5
@@ -144,17 +140,13 @@ void set_surface_est_method(pcl::PointCloud<pcl::PointNormal>::Ptr &cloud_with_n
 
 void create_mesh(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, int &normal_mode, int &surface_mode,
                  pcl::PolygonMesh &triangles) {
-  // convert PointXYZRGB to PointXYZ
-  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_xyz(new pcl::PointCloud<pcl::PointXYZ>());
-  pcl::copyPointCloud(*cloud, *cloud_xyz);
-
-  // pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_xyz_filtered (new pcl::PointCloud<pcl::PointXYZ>());
-  // cloudPointFilter(cloud_xyz, cloud_xyz_filtered);
-
   // estimate normals
-  pcl::PointCloud<pcl::PointNormal>::Ptr cloud_with_normals(new pcl::PointCloud<pcl::PointNormal>());
-  set_normal_est_method(cloud_xyz, normal_mode, cloud_with_normals);
+  pcl::PointCloud<pcl::PointXYZRGBNormal>::Ptr cloud_with_normals(new pcl::PointCloud<pcl::PointXYZRGBNormal>());
+  set_normal_est_method(cloud, normal_mode, cloud_with_normals);
 
   // calculate surface
   set_surface_est_method(cloud_with_normals, surface_mode, triangles);
+
+  // Save the mesh with color
+  pcl::io::savePLYFile("mesh_with_color.ply", triangles);
 }
